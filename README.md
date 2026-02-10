@@ -1,59 +1,132 @@
-# Airflow Abaco Project
+# Proyecto Airflow-Abaco ETL
 
-This project implements an ETL pipeline using Apache Airflow, Docker Compose, and PostgreSQL. It extracts data from an API (simulated via jsonplaceholder), transforms it, and loads it into a PostgreSQL Data Warehouse.
+Proyecto de ETL usando Apache Airflow, Docker Compose y PostgreSQL para procesar **33 tablas** desde la API de Abaco.
 
-## Project Structure
-- `dags/`: Contains the Airflow DAGs (`abaco_etl_dag.py`).
-- `scripts/`: Initialization scripts (`init_db.sql`).
-- `docker-compose.yaml`: Definition of Airflow and Postgres services.
-- `.env`: Environment variables.
-- `requirements.txt`: Python dependencies.
+## 📁 Estructura del Proyecto
 
-## Prerequisites
-- Docker and Docker Compose installed.
-- 4GB+ RAM available for Docker.
+```
+airflow-abaco-project/
+├── dags/
+│   ├── abaco_etl_dag.py      # DAG principal (genera tareas dinámicamente)
+│   └── abaco_config.py       # Configuración de las 33 tablas
+├── scripts/
+│   └── create_tables.sql     # SQL para crear las 33 tablas
+├── docker-compose.yaml       # Servicios de Airflow y PostgreSQL
+├── .env                      # Variables de entorno
+└── requirements.txt          # Dependencias Python
+```
 
-## Setup and Execution
+## 🚀 Inicio Rápido
 
-1. **Initialize the Environment**
-   Run the following command to initialize the database and create the `airflow` user:
-   ```bash
-   docker compose up airflow-init
-   ```
+### 1. Configurar tus Tablas
 
-2. **Start the Services**
-   Start all services in detached mode:
-   ```bash
-   docker compose up -d
-   ```
+Edita `dags/abaco_config.py` y completa la lista `TABLES` con tus 33 tablas:
 
-3. **Access Airflow UI**
-   - URL: [http://localhost:8080](http://localhost:8080)
-   - User: `airflow`
-   - Password: `airflow`
+```python
+TABLES = [
+    {
+        'name': 'clientes',
+        'endpoint': 'clientes',
+        'primary_key': 'id_cliente',
+        'columns': ['id_cliente', 'nombre', 'email', ...]
+    },
+    # ... agregar las 32 tablas restantes
+]
+```
 
-4. **Verify the DAG**
-   - In the UI, look for `abaco_etl_dag`.
-   - Enable the DAG by toggling the switch to "On".
-   - It is scheduled to run `@daily`. You can trigger it manually to test.
+### 2. Crear las Tablas en PostgreSQL
 
-5. **Verify Data in PostgreSQL**
-   You can connect to the Postgres database to check the loaded data:
-   ```bash
-   docker compose exec postgres psql -U postgres -d postgres -c "SELECT * FROM abaco_data LIMIT 10;"
-   ```
+Edita `scripts/create_tables.sql` con el DDL de tus 33 tablas, luego ejecuta:
 
-## Configuration
-- **API Configuration**: The DAG is currently configured to use a simulated API. To use the real Abaco API, edit `dags/abaco_etl_dag.py` and update the `url` and `headers` in the `extract_data` function.
-- **Database**: The target table `abaco_data` is created automatically if you run the init script manually or if you extend the docker-compose to run it on startup. 
-  *Note: For this setup, the table creation is handled by the user manually or can be added to the DAG as a setup task. To ensure it exists, you can run:*
-  ```bash
-  docker compose exec postgres psql -U postgres -d postgres -f /opt/airflow/scripts/init_db.sql
-  ```
-  *(Note: You might need to mount the scripts folder to the postgres container or copy it. Alternatively, just run the SQL command directly).*
-  
-  **Better approach included:** The `docker-compose.yaml` (if standard) mounts volumes. We can execute the SQL via the DAG or manually.
+```bash
+docker compose up -d postgres
+docker compose exec postgres psql -U airflow -d airflow -f /opt/airflow/scripts/create_tables.sql
+```
 
-## Notes
-- The project uses `LocalExecutor` or `CeleryExecutor` depending on the `docker-compose.yaml` default (usually Celery).
-- `AIRFLOW_UID` is set in `.env`.
+### 3. Inicializar Airflow
+
+```bash
+docker compose up airflow-init
+```
+
+### 4. Iniciar los Servicios
+
+```bash
+docker compose up -d
+```
+
+### 5. Acceder a Airflow UI
+
+- **URL**: http://localhost:8080
+- **Usuario**: `airflow`
+- **Contraseña**: `airflow`
+
+### 6. Ejecutar el DAG
+
+1. En la UI, busca `abaco_etl_dag`
+2. Activa el DAG (toggle ON)
+3. Ejecuta manualmente o espera la ejecución diaria
+
+## 📊 Acceder a PgAdmin
+
+- **URL**: http://localhost:5050
+- **Email**: `admin@admin.com`
+- **Contraseña**: `admin`
+
+Conexión a PostgreSQL:
+- Host: `postgres`
+- Puerto: `5432`
+- Usuario: `airflow`
+- Contraseña: `airflow`
+- Base de datos: `airflow`
+
+## 🔧 Cómo Funciona
+
+El DAG usa un **patrón simple basado en configuración**:
+
+1. Lee la lista de tablas desde `abaco_config.py`
+2. Para cada tabla, crea 3 tareas automáticamente:
+   - **Extract**: Obtiene datos de la API de Abaco
+   - **Transform**: Prepara los datos para PostgreSQL
+   - **Load**: Inserta/actualiza en PostgreSQL (UPSERT)
+
+### Agregar una Nueva Tabla
+
+Solo necesitas:
+1. Agregar la configuración en `abaco_config.py`
+2. Agregar el `CREATE TABLE` en `create_tables.sql`
+3. Reiniciar el DAG
+
+¡No necesitas modificar el código del DAG!
+
+## 🛠️ Comandos Útiles
+
+```bash
+# Ver logs de Airflow
+docker compose logs -f airflow-scheduler
+
+# Reiniciar servicios
+docker compose restart
+
+# Detener todo
+docker compose down
+
+# Limpiar todo (incluyendo volúmenes)
+docker compose down -v
+```
+
+## 📝 Notas
+
+- El DAG está configurado para ejecutarse diariamente (`@daily`)
+- Usa UPSERT para evitar duplicados
+- Todas las tablas tienen una columna `ingested_at` para tracking
+- Los datos se extraen de `http://host.docker.internal:5001` (ajusta en `abaco_config.py`)
+
+## 🔄 Próximos Pasos (Opcional)
+
+Una vez que te sientas cómodo, puedes mejorar el proyecto:
+- Agregar foreign keys entre tablas
+- Implementar carga incremental
+- Agregar schemas separados (raw/staging/analytics)
+- Usar TaskGroups para organizar mejor las tareas
+- Implementar tests y validaciones
