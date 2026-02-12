@@ -36,26 +36,51 @@ def extract_data(table_config, **kwargs):
     Returns:
         Lista de registros extraídos
     """
+    from abaco_config import ABACO_API_TOKEN
+    from datetime import datetime, timedelta
+    
     endpoint = table_config['endpoint']
     url = f"{ABACO_API_BASE_URL}/{endpoint}"
     
+    # Preparar parámetros de consulta
+    params = {
+        'token': ABACO_API_TOKEN
+    }
+    
+    # Si el endpoint requiere rango de fechas, agregar parámetros
+    if table_config.get('requires_date_range', False):
+        # Por defecto, extraer datos del último mes
+        execution_date = kwargs.get('execution_date', datetime.now())
+        fecha_fin = execution_date.strftime('%Y-%m-%d')
+        fecha_inicio = (execution_date - timedelta(days=30)).strftime('%Y-%m-%d')
+        
+        params['d_fecha_inicio'] = fecha_inicio
+        params['d_fecha_fin'] = fecha_fin
+        
+        print(f"📅 Extrayendo datos desde {fecha_inicio} hasta {fecha_fin}")
+    
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, params=params, timeout=60)
         response.raise_for_status()
         data = response.json()
+        
+        # La API de Abaco puede devolver un objeto con una clave 'data' o directamente una lista
+        if isinstance(data, dict) and 'data' in data:
+            data = data['data']
+        
         print(f"✅ Extraídos {len(data)} registros de {endpoint}")
         return data
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ Error HTTP {e.response.status_code} extrayendo datos de {endpoint}")
+        print(f"   Respuesta: {e.response.text[:500]}")
+        raise
     except requests.exceptions.ConnectionError:
-        # Fallback para testing local
-        url = f"http://localhost:5001/{endpoint}"
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        print(f"✅ Extraídos {len(data)} registros de {endpoint} (localhost)")
-        return data
+        print(f"❌ Error de conexión con {url}")
+        raise
     except Exception as e:
         print(f"❌ Error extrayendo datos de {endpoint}: {str(e)}")
         raise
+
 
 
 def transform_data(table_config, **kwargs):
@@ -118,14 +143,22 @@ def load_data(table_config, **kwargs):
     col_names = ", ".join(columns)
     placeholders = ", ".join(["%s"] * len(columns))
     
-    # Construir cláusula de UPDATE (excluir primary key)
-    update_cols = [col for col in columns if col != primary_key]
+    # Manejar clave primaria simple o compuesta
+    if isinstance(primary_key, list):
+        # Clave primaria compuesta
+        pk_columns = ", ".join(primary_key)
+        update_cols = [col for col in columns if col not in primary_key]
+    else:
+        # Clave primaria simple
+        pk_columns = primary_key
+        update_cols = [col for col in columns if col != primary_key]
+    
     update_clause = ", ".join([f"{col} = EXCLUDED.{col}" for col in update_cols])
     
     insert_query = f"""
         INSERT INTO {table_name} ({col_names})
         VALUES %s
-        ON CONFLICT ({primary_key}) DO UPDATE 
+        ON CONFLICT ({pk_columns}) DO UPDATE 
         SET {update_clause},
             ingested_at = CURRENT_TIMESTAMP;
     """
